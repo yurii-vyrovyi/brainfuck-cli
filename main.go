@@ -11,7 +11,7 @@ import (
 	"strconv"
 	"syscall"
 
-	bfrunner "brainfuck/internal/bf-runner"
+	bfrunner "github.com/yurii-vyrovyi/brainfuck"
 )
 
 type Config struct {
@@ -60,7 +60,7 @@ func run(config *Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	bfRunner := bfrunner.New(config.dataSize)
+	bfRunner := bfrunner.New(config.dataSize, os.Stdout, os.Stdin)
 
 	buf, err := io.ReadAll(cmdFile)
 	if err != nil {
