@@ -4,20 +4,27 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"github.com/yurii-vyrovyi/brainfuck/reader"
 	"io"
 	"os"
 	"os/signal"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 
 	bfrunner "github.com/yurii-vyrovyi/brainfuck"
 )
 
 type Config struct {
-	fileName string
-	dataSize int
+	cmdFileName string
+	dataSize    int
+	input       string
 }
+
+const (
+	InputStdin = "stdin"
+)
 
 func main() {
 	defer func() {
@@ -51,7 +58,7 @@ func setup() error {
 
 func run(config *Config) error {
 
-	cmdFile, err := os.Open(config.fileName)
+	cmdFile, err := os.Open(config.cmdFileName)
 	if err != nil {
 		return fmt.Errorf("failed to open file: %w", err)
 	}
@@ -60,7 +67,22 @@ func run(config *Config) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	bfRunner := bfrunner.New(config.dataSize, os.Stdout, os.Stdin)
+	var inReader bfrunner.InputReader
+
+	if config.input == InputStdin {
+		inReader, err = reader.BuildStdInReader()
+		if err != nil {
+			return fmt.Errorf("failed to create stdin input reader: %w", err)
+		}
+	} else {
+		inReader, err = reader.BuildFileReader(config.input)
+		if err != nil {
+			return fmt.Errorf("failed to create file input reader: %w", err)
+		}
+	}
+	defer func() { _ = inReader.Close() }()
+
+	bfRunner := bfrunner.New(config.dataSize, os.Stdout, inReader)
 
 	buf, err := io.ReadAll(cmdFile)
 	if err != nil {
@@ -92,7 +114,7 @@ func parseParams() (*Config, error) {
 		switch os.Args[iParam] {
 
 		case "-f":
-			config.fileName = os.Args[iParam+1]
+			config.cmdFileName = os.Args[iParam+1]
 
 		case "-s":
 			s := os.Args[iParam+1]
@@ -102,14 +124,21 @@ func parseParams() (*Config, error) {
 			}
 
 			config.dataSize = int(n)
+
+		case "-i":
+			config.input = os.Args[iParam+1]
 		}
 
 		iParam = iParam + 2
 	}
 
 	// checking required parameters
-	if len(config.fileName) == 0 {
+	if len(config.cmdFileName) == 0 {
 		return nil, errors.New("filename is empty")
+	}
+
+	if len(config.input) == 0 || strings.ToLower(config.input) == InputStdin {
+		config.input = InputStdin
 	}
 
 	return &config, nil
