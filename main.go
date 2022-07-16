@@ -1,29 +1,30 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
-	"github.com/yurii-vyrovyi/brainfuck/reader"
-	"io"
 	"os"
-	"os/signal"
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 
-	bfrunner "github.com/yurii-vyrovyi/brainfuck"
+	"github.com/yurii-vyrovyi/brainfuck"
+	bfreader "github.com/yurii-vyrovyi/brainfuck/reader"
+	bfwriter "github.com/yurii-vyrovyi/brainfuck/writer"
+
+	"golang.org/x/exp/constraints"
 )
 
 type Config struct {
 	cmdFileName string
 	dataSize    int
 	input       string
+	output      string
 }
 
 const (
-	InputStdin = "stdin"
+	InputStdIn   = "stdin"
+	OutputStdOut = "stdout"
 )
 
 func main() {
@@ -64,36 +65,77 @@ func run(config *Config) error {
 	}
 	defer func() { _ = cmdFile.Close() }()
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	var inReader bfrunner.InputReader
-
-	if config.input == InputStdin {
-		inReader, err = reader.BuildStdInReader()
-		if err != nil {
-			return fmt.Errorf("failed to create stdin input reader: %w", err)
-		}
-	} else {
-		inReader, err = reader.BuildFileReader(config.input)
-		if err != nil {
-			return fmt.Errorf("failed to create file input reader: %w", err)
-		}
+	inReader, err := createInputReader(config)
+	if err != nil {
+		return err
 	}
 	defer func() { _ = inReader.Close() }()
 
-	bfRunner := bfrunner.New(config.dataSize, os.Stdout, inReader)
-
-	buf, err := io.ReadAll(cmdFile)
+	outWriter, err := createOutputWriter[int16](config)
 	if err != nil {
-		return fmt.Errorf("faield to read file: %w", err)
+		return err
+	}
+	defer func() { _ = outWriter.Close() }()
+
+	bfInterpreter := brainfuck.New[int16](config.dataSize, inReader, outWriter).
+		WithCmd('^', func(bf *brainfuck.BfInterpreter[int16], cmd brainfuck.CmdType) error {
+			bf.Data[bf.DataPtr] = bf.Data[bf.DataPtr] * bf.Data[bf.DataPtr]
+			return nil
+		})
+
+	res, err := bfInterpreter.Run(cmdFile)
+	if err != nil {
+		return fmt.Errorf("interpreter run failed: %w", err)
 	}
 
-	if err := bfRunner.Run(ctx, string(buf)); err != nil {
-		return fmt.Errorf("bfRunner run failed: %w", err)
+	fmt.Println()
+	fmt.Println("----- MEMORY DUMP -----\r")
+	for i, v := range res {
+		fmt.Printf("%d", v)
+		if i < len(res)-1 {
+			fmt.Print(" ")
+		}
 	}
+	fmt.Println()
+	fmt.Println()
 
 	return nil
+}
+
+func createInputReader(config *Config) (brainfuck.InputReader, error) {
+	var inReader brainfuck.InputReader
+	var err error
+
+	if config.input == InputStdIn {
+		inReader, err = bfreader.BuildStdInReader()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create stdin input reader: %w", err)
+		}
+	} else {
+		inReader, err = bfreader.BuildFileReader(config.input)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create file input reader: %w", err)
+		}
+	}
+	return inReader, nil
+}
+
+func createOutputWriter[DataType constraints.Signed](config *Config) (brainfuck.OutputWriter[DataType], error) {
+	var outWriter brainfuck.OutputWriter[DataType]
+	var err error
+
+	if config.output == OutputStdOut {
+		outWriter = bfwriter.BuildStdOutWriter[DataType]()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create stout output writer: %w", err)
+		}
+	} else {
+		outWriter, err = bfwriter.BuildFileWriter[DataType](config.output)
+		if err != nil {
+			return nil, fmt.Errorf("failed to create file output writer: %w", err)
+		}
+	}
+	return outWriter, nil
 }
 
 func parseParams() (*Config, error) {
@@ -103,21 +145,33 @@ func parseParams() (*Config, error) {
 	}
 
 	config := Config{}
-	iParam := 1
 
-	for {
+	const (
+		delim     = "="
+		argPrefix = "-"
+	)
 
-		if iParam >= len(os.Args)-1 {
-			break
+	for iArg := 1; iArg < len(os.Args); iArg++ {
+
+		delimPos := strings.Index(os.Args[iArg], delim)
+		if delimPos == -1 || delimPos == 0 || delimPos == len(os.Args[iArg])-1 {
+			continue
 		}
 
-		switch os.Args[iParam] {
+		k := os.Args[iArg][:delimPos]
+		v := os.Args[iArg][delimPos+1:]
+
+		if !strings.HasPrefix(k, argPrefix) {
+			continue
+		}
+
+		switch k {
 
 		case "-f":
-			config.cmdFileName = os.Args[iParam+1]
+			config.cmdFileName = v
 
 		case "-s":
-			s := os.Args[iParam+1]
+			s := v
 			n, err := strconv.ParseInt(s, 10, 64)
 			if err != nil {
 				return nil, fmt.Errorf("bad data size parameter [%s]", s)
@@ -126,10 +180,11 @@ func parseParams() (*Config, error) {
 			config.dataSize = int(n)
 
 		case "-i":
-			config.input = os.Args[iParam+1]
-		}
+			config.input = v
 
-		iParam = iParam + 2
+		case "-o":
+			config.output = v
+		}
 	}
 
 	// checking required parameters
@@ -137,8 +192,12 @@ func parseParams() (*Config, error) {
 		return nil, errors.New("filename is empty")
 	}
 
-	if len(config.input) == 0 || strings.ToLower(config.input) == InputStdin {
-		config.input = InputStdin
+	if len(config.input) == 0 || strings.ToLower(config.input) == InputStdIn {
+		config.input = InputStdIn
+	}
+
+	if len(config.output) == 0 || strings.ToLower(config.output) == OutputStdOut {
+		config.output = OutputStdOut
 	}
 
 	return &config, nil
