@@ -25,6 +25,24 @@ type Config struct {
 const (
 	InputStdIn   = "stdin"
 	OutputStdOut = "stdout"
+
+	HelpString = `brainfuck-cli tool is a brainfuck language interpreter
+	
+  Usage:
+    brainfuck-cli -f=CMD_FILENAME [-s=MEMORY_SIZE] [-i=INPUT] [-o=OUTPUT]
+
+    CMD_FILENAME    File with brainfuck commands
+
+    MEMORY_SIZE     [optional] Size of brainfuck interpreter memory. If not set brainfuck package uses default value.
+
+    INPUT           [optional] Specifies the way to get input. Possible options are:
+                      - 'stdin' – interpreter reads input from StdIn. This is default value.
+                      - filename – File that contains input that will be read
+
+    OUTPUT          [optional] Specifies the way to write output. Possible options are:
+                      - 'stdout' – interpreter writes output to StdOut. This is default value.
+                      - filename – File that will get output values
+`
 )
 
 func main() {
@@ -38,23 +56,24 @@ func main() {
 		}
 	}()
 
-	if err := setup(); err != nil {
-		fmt.Println("error:", err)
-		os.Exit(1)
-	}
-}
-
-func setup() error {
 	config, err := parseParams()
 	if err != nil {
-		return fmt.Errorf("failed to parse parameters: %w", err)
+
+		fmt.Println("failed to parse parameters: ", err)
+		fmt.Println()
+		fmt.Println(HelpString)
+
+		os.Exit(1)
 	}
 
 	if err := run(config); err != nil {
-		return err
+		os.Exit(1)
 	}
 
-	return nil
+	if err := run(config); err != nil {
+		fmt.Println("error:", err)
+		os.Exit(1)
+	}
 }
 
 func run(config *Config) error {
