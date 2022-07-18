@@ -65,7 +65,7 @@ func run(config *Config) error {
 	}
 	defer func() { _ = cmdFile.Close() }()
 
-	inReader, err := createInputReader(config)
+	inReader, err := createInputReader[int16](config)
 	if err != nil {
 		return err
 	}
@@ -78,7 +78,7 @@ func run(config *Config) error {
 	defer func() { _ = outWriter.Close() }()
 
 	bfInterpreter := brainfuck.New[int16](config.dataSize, inReader, outWriter).
-		WithCmd('^', func(bf *brainfuck.BfInterpreter[int16], cmd brainfuck.CmdType) error {
+		WithCmd('^', func(bf *brainfuck.BfInterpreter[int16]) error {
 			bf.Data[bf.DataPtr] = bf.Data[bf.DataPtr] * bf.Data[bf.DataPtr]
 			return nil
 		})
@@ -102,17 +102,17 @@ func run(config *Config) error {
 	return nil
 }
 
-func createInputReader(config *Config) (brainfuck.InputReader, error) {
-	var inReader brainfuck.InputReader
+func createInputReader[DataType constraints.Signed](config *Config) (brainfuck.InputReader[DataType], error) {
+	var inReader brainfuck.InputReader[DataType]
 	var err error
 
 	if config.input == InputStdIn {
-		inReader, err = bfreader.BuildStdInReader()
+		inReader, err = bfreader.BuildStdInReader[DataType]()
 		if err != nil {
 			return nil, fmt.Errorf("failed to create stdin input reader: %w", err)
 		}
 	} else {
-		inReader, err = bfreader.BuildFileReader(config.input)
+		inReader, err = bfreader.BuildFileReader[DataType](config.input)
 		if err != nil {
 			return nil, fmt.Errorf("failed to create file input reader: %w", err)
 		}
